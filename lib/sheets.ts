@@ -67,6 +67,7 @@ async function headers(t: Table): Promise<string[]> {
 }
 
 export async function appendRow(t: Table, obj: Record<string, Cell>) {
+  if (process.env.LOCAL_CSV_DIR) return localWrite(t, (rows) => rows.push(rows[0].map((k) => String(obj[k] ?? ''))));
   const h = await headers(t);
   await api().spreadsheets.values.append({
     spreadsheetId: TABLES[t],
@@ -78,6 +79,13 @@ export async function appendRow(t: Table, obj: Record<string, Cell>) {
 }
 
 export async function updateRow(t: Table, row: Row, patch: Record<string, Cell>) {
+  if (process.env.LOCAL_CSV_DIR) {
+    return localWrite(t, (rows) => {
+      const i = row._row - 1;
+      if (!rows[i]) throw new Error(`${t}.csv : ligne ${row._row} introuvable.`);
+      rows[i] = rows[0].map((k, j) => String(patch[k] !== undefined ? patch[k] : rows[i][j] ?? ''));
+    });
+  }
   const h = await headers(t);
   const merged = h.map((k) => (patch[k] !== undefined ? patch[k] : row[k] ?? ''));
   await api().spreadsheets.values.update({
@@ -88,20 +96,59 @@ export async function updateRow(t: Table, row: Row, patch: Record<string, Cell>)
   });
 }
 
-/** Mode test local (lecture seule) : LOCAL_CSV_DIR=dossier contenant Clients.csv, Stock.csv… */
+/*
+ * Mode local : LOCAL_CSV_DIR=dossier contenant Clients.csv, Stock.csv… (export « CSV » de chaque Google Sheet).
+ * Lecture et écriture. Accepte UTF-8 (avec ou sans BOM) ou ANSI, séparateur « , » ou « ; » (CSV enregistré par Excel FR) ;
+ * l'écriture conserve le séparateur du fichier et ajoute un BOM UTF-8 pour qu'Excel affiche les accents.
+ */
+type CsvFile = { rows: string[][]; sep: string };
+
+const csvPath = (t: Table) => `${process.env.LOCAL_CSV_DIR}/${t}.csv`;
+
 async function localCsv(t: Table): Promise<string[][]> {
+  return (await readCsv(t)).rows;
+}
+
+async function readCsv(t: Table): Promise<CsvFile> {
   const { readFile } = await import('node:fs/promises');
-  const txt = await readFile(`${process.env.LOCAL_CSV_DIR}/${t}.csv`, 'utf8').catch(() => '');
+  const buf = await readFile(csvPath(t)).catch(() => null);
+  if (!buf) return { rows: [], sep: ',' };
+  let txt = buf.toString('utf8');
+  if (txt.includes('�')) txt = buf.toString('latin1');
+  txt = txt.replace(/^﻿/, '');
+  const first = txt.slice(0, txt.indexOf('\n') >>> 0);
+  const sep = (first.match(/;/g)?.length ?? 0) > (first.match(/,/g)?.length ?? 0) ? ';' : ',';
   const rows: string[][] = [];
   let row: string[] = [], cell = '', q = false;
   for (let i = 0; i < txt.length; i++) {
     const ch = txt[i];
     if (q) { if (ch === '"' && txt[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') q = false; else cell += ch; }
     else if (ch === '"') q = true;
-    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === sep) { row.push(cell); cell = ''; }
     else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
     else if (ch !== '\r') cell += ch;
   }
   if (cell || row.length) { row.push(cell); rows.push(row); }
-  return rows;
+  return { rows, sep };
+}
+
+let writeQueue: Promise<unknown> = Promise.resolve();
+
+/** Relit le fichier, applique la modification, puis le remplace (écritures en file pour éviter les pertes). */
+function localWrite(t: Table, edit: (rows: string[][]) => void): Promise<void> {
+  const job = writeQueue.then(async () => {
+    const { writeFile, rename } = await import('node:fs/promises');
+    const { rows, sep } = await readCsv(t);
+    if (!rows[0]?.length) throw new Error(`${csvPath(t)} introuvable ou sans en-têtes.`);
+    edit(rows);
+    const esc = (v: string) => (/["\r\n]/.test(v) || v.includes(sep) ? `"${v.replace(/"/g, '""')}"` : v);
+    const out = '﻿' + rows.map((r) => r.map(esc).join(sep)).join('\r\n') + '\r\n';
+    const tmp = `${csvPath(t)}.tmp`;
+    await writeFile(tmp, out, 'utf8');
+    await rename(tmp, csvPath(t)).catch((e) => {
+      throw new Error(`Impossible d'enregistrer ${t}.csv (fichier ouvert dans Excel ?) : ${e.message}`);
+    });
+  });
+  writeQueue = job.catch(() => {});
+  return job;
 }
