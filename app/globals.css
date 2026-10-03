@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --saison: #B0562D;
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { @apply bg-neige text-encre font-sans antialiased; font-feature-settings: 'tnum' 1; }
+
+h1, h2, h3 { @apply font-display text-sapin; font-weight: 400; letter-spacing: -0.01em; }
+
+:focus-visible { outline: 2px solid var(--saison); outline-offset: 2px; }
+
+@layer components {
+  .field { @apply block w-full rounded-md border border-pierre bg-white px-3 py-2 text-[15px] text-encre placeholder:text-granit/60 focus:border-cedre focus:outline-none; }
+  .label { @apply mb-1 block text-[13px] font-medium text-granit; }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-md bg-sapin px-4 py-2 text-[14px] font-semibold text-neige transition-colors hover:bg-cedre disabled:opacity-60; }
+  .btn-ghost { @apply inline-flex items-center justify-center gap-2 rounded-md border border-pierre bg-white px-3 py-2 text-[14px] font-medium text-sapin transition-colors hover:border-cedre; }
+  .panel { @apply rounded-[10px] border border-pierre bg-white; }
+  .tbl { @apply w-full border-collapse text-[14px]; }
+  .tbl th { @apply border-b border-pierre bg-givre px-3 py-2 text-left text-[12px] font-semibold text-granit; }
+  .tbl td { @apply border-b border-pierre/70 px-3 py-2 align-top; }
+  .tbl tr:last-child td { @apply border-b-0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
